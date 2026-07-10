@@ -41,3 +41,11 @@ body {
   background: #39D2C0;
   color: #0D1117;
 }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}

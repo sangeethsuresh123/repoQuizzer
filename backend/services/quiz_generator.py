@@ -4,7 +4,9 @@ from openai import OpenAI
 
 from config import NVIDIA_API_KEY, NVIDIA_BASE_URL, LLAMA_MODEL
 
-_client = OpenAI(base_url=NVIDIA_BASE_URL, api_key=NVIDIA_API_KEY) if NVIDIA_API_KEY else None
+_client = OpenAI(base_url=NVIDIA_BASE_URL, api_key=NVIDIA_API_KEY, timeout=150.0) if NVIDIA_API_KEY else None
+
+QUIZ_TIMEOUT_SECONDS = 150
 
 
 class QuizGenerationError(Exception):
@@ -84,7 +86,7 @@ def _extract_json(text: str) -> dict:
     raise QuizGenerationError("Model response contained no JSON object.")
 
 
-def generate_quiz(scope_path: str, context_blob: str) -> dict:
+def generate_quiz(scope_path: str, context_blob: str, previous_questions: list[str] | None = None) -> dict:
     if _client is None:
         raise QuizGenerationError(
             "NVIDIA_API_KEY is not set on the backend. Add it to backend/.env."
@@ -93,8 +95,17 @@ def generate_quiz(scope_path: str, context_blob: str) -> dict:
     user_prompt = (
         f"Scope: {scope_path}\n\n"
         f"Here is the source code for this scope:\n{context_blob}\n\n"
-        "Generate the quiz JSON now. Output ONLY the JSON object."
     )
+
+    if previous_questions:
+        prev_list = "\n".join(f"- {q}" for q in previous_questions)
+        user_prompt += (
+            f"The following questions have ALREADY been asked — do NOT repeat them "
+            f"or ask similar questions. Generate completely different questions:\n"
+            f"{prev_list}\n\n"
+        )
+
+    user_prompt += "Generate the quiz JSON now. Output ONLY the JSON object."
 
     response = _client.chat.completions.create(
         model=LLAMA_MODEL,
@@ -108,7 +119,13 @@ def generate_quiz(scope_path: str, context_blob: str) -> dict:
     )
 
     raw_text = response.choices[0].message.content or ""
-    quiz = _extract_json(raw_text)
+
+    try:
+        quiz = _extract_json(raw_text)
+    except QuizGenerationError:
+        with open("/tmp/quiz_raw.txt", "w") as f:
+            f.write(raw_text)
+        raise
 
     if "mcqs" not in quiz or "coding_task" not in quiz or not quiz["mcqs"]:
         raise QuizGenerationError(
@@ -116,3 +133,90 @@ def generate_quiz(scope_path: str, context_blob: str) -> dict:
             "small models occasionally drop a field."
         )
     return quiz
+
+
+def generate_fallback_quiz(scope_path: str, files: list[dict]) -> dict:
+    """Generate a basic quiz from code structure when the LLM is unavailable."""
+    all_code = "\n".join(f["content"] for f in files)
+    lines = all_code.splitlines()
+
+    funcs = re.findall(r"(?:def|function|fn)\s+(\w+)", all_code)
+    classes = re.findall(r"class\s+(\w+)", all_code)
+    imports = re.findall(r"(?:^|\n)(?:import|from)\s+([\w.]+)", all_code)
+    strings = re.findall(r'"([^"]{5,80})"', all_code)
+    comments = re.findall(r"#\s*(.+)", all_code)
+
+    names = [c for c in classes if len(c) > 2][:5] or [f for f in funcs if len(f) > 2][:5] or ["module"]
+
+    code_sample_lines = [l for l in lines if l.strip() and not l.strip().startswith(("#", "//", "/*"))]
+    code_sample = "\n".join(code_sample_lines[:15]) if code_sample_lines else "# No code found"
+
+    mcqs = []
+    if names:
+        mcqs.append({
+            "id": "q1",
+            "question": f"What is the name of this class or function defined in {scope_path or 'the code'}?",
+            "options": [
+                names[0],
+                names[0] + "_test",
+                "main",
+                "init",
+            ],
+            "correct_index": 0,
+            "explanation": f"The identifier '{names[0]}' is defined in the source code under {scope_path}.",
+        })
+    if len(funcs) >= 2:
+        mcqs.append({
+            "id": "q2",
+            "question": f"Which of these functions is defined in {scope_path or 'the code'}?",
+            "options": [
+                funcs[0],
+                "print_this",
+                "run_tests",
+                "setup_config",
+            ],
+            "correct_index": 0,
+            "explanation": f"'{funcs[0]}' is defined in the source. The other options do not appear.",
+        })
+    else:
+        mcqs.append({
+            "id": "q2",
+            "question": f"Based on the code in {scope_path or 'the repo'}, which statement is true?",
+            "options": [
+                f"The code contains {len(lines)} lines",
+                "The code has no functions",
+                "The code is only comments",
+                "The code is empty",
+            ],
+            "correct_index": 0,
+            "explanation": f"The code file(s) contain approximately {len(lines)} lines total.",
+        })
+
+    mcqs.append({
+        "id": "q3",
+        "question": f"What type of content does {scope_path or 'this scope'} primarily contain?",
+        "options": [
+            "Source code",
+            "Configuration only",
+            "Documentation only",
+            "Test data",
+        ],
+        "correct_index": 0,
+        "explanation": f"This scope contains source code files with {len(files)} file(s).",
+    })
+
+    starter_lines = code_sample_lines[:10]
+    starter = "\n".join(starter_lines) if starter_lines else "# starter code"
+    ref = code_sample_lines[:12]
+    ref_solution = "\n".join(ref) if ref else starter
+
+    coding_task = {
+        "type": "bug_fix",
+        "title": f"Understand the code in {scope_path or 'this scope'}",
+        "prompt": f"Review the following code from {scope_path} and add a docstring to the main function or class.",
+        "starter_code": starter,
+        "reference_solution": ref_solution,
+        "explanation": "This is a code comprehension exercise based on the actual source files in the selected scope.",
+    }
+
+    return {"mcqs": mcqs, "coding_task": coding_task}

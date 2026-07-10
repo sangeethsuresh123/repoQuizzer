@@ -4,7 +4,7 @@ from openai import OpenAI
 
 from config import NVIDIA_API_KEY, NVIDIA_BASE_URL, LLAMA_MODEL
 
-_client = OpenAI(base_url=NVIDIA_BASE_URL, api_key=NVIDIA_API_KEY) if NVIDIA_API_KEY else None
+_client = OpenAI(base_url=NVIDIA_BASE_URL, api_key=NVIDIA_API_KEY, timeout=120.0) if NVIDIA_API_KEY else None
 
 CODE_GRADER_SYSTEM_PROMPT = """You grade one code-writing/bug-fix answer against a reference \
 solution. Judge correctness and reasoning, not exact text match — different but correct \
@@ -42,7 +42,7 @@ def _parse_grader_json(raw_text: str) -> dict:
                 pass
     # Last resort: a small model sometimes just says "correct" or "incorrect" in prose.
     lowered = text.lower()
-    if "true" in lowered or "correct" in lowered and "incorrect" not in lowered:
+    if "correct" in lowered and "incorrect" not in lowered:
         return {"correct": True, "feedback": text[:300]}
     return {"correct": False, "feedback": text[:300] or "Could not parse grader response."}
 
@@ -52,10 +52,9 @@ def grade_coding_task(coding_task: dict, user_answer: str) -> dict:
         return {"correct": False, "feedback": "No answer was submitted."}
 
     if _client is None:
-        # Fallback without an API key: naive non-empty check so the app still runs end to end.
         return {
             "correct": None,
-            "feedback": "Automatic grading needs NVIDIA_API_KEY; compare your answer with the "
+            "feedback": "Automatic grading needs an API key; compare your answer with the "
                          "reference solution shown in the explanation.",
         }
 
@@ -66,15 +65,21 @@ def grade_coding_task(coding_task: dict, user_answer: str) -> dict:
         f"User's answer:\n{user_answer}\n\n"
         "Grade the user's answer now. Output ONLY the JSON object."
     )
-    response = _client.chat.completions.create(
-        model=LLAMA_MODEL,
-        temperature=0.1,
-        top_p=0.7,
-        max_tokens=300,
-        messages=[
-            {"role": "system", "content": CODE_GRADER_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-    )
-    raw_text = response.choices[0].message.content or ""
-    return _parse_grader_json(raw_text)
+    try:
+        response = _client.chat.completions.create(
+            model=LLAMA_MODEL,
+            temperature=0.1,
+            top_p=0.7,
+            max_tokens=300,
+            messages=[
+                {"role": "system", "content": CODE_GRADER_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        raw_text = response.choices[0].message.content or ""
+        return _parse_grader_json(raw_text)
+    except Exception:
+        return {
+            "correct": None,
+            "feedback": "Grading service timed out. Compare your answer with the reference solution.",
+        }

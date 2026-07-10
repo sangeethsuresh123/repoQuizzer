@@ -1,15 +1,30 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
+const DEFAULT_TIMEOUT_MS = 250_000;
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Request failed (${res.status})`);
+  const { signal, ...rest } = options ?? {};
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  // If caller provides their own signal, abort our controller when it fires.
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", () => controller.abort(), { once: true });
   }
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      ...rest,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `Request failed (${res.status})`);
+    }
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export const api = {
@@ -19,10 +34,19 @@ export const api = {
       body: JSON.stringify({ repo_url }),
     }),
 
-  generateQuiz: (repo_url: string, scope_path: string) =>
+  generateQuiz: (
+    repo_url: string,
+    scope_path: string,
+    opts?: { signal?: AbortSignal; previousQuestions?: string[] },
+  ) =>
     request<import("./types").Quiz>("/api/quiz/generate", {
       method: "POST",
-      body: JSON.stringify({ repo_url, scope_path }),
+      body: JSON.stringify({
+        repo_url,
+        scope_path,
+        previous_questions: opts?.previousQuestions ?? [],
+      }),
+      signal: opts?.signal,
     }),
 
   submitQuiz: (payload: {

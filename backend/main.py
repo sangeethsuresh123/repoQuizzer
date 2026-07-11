@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import config
 import db
 from services.repo_service import clone_repo, build_tree, collect_scope_files, RepoError
 from services.chunker import build_context_blob
@@ -27,7 +28,7 @@ app = FastAPI(title="Repo Quiz API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

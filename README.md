@@ -1,4 +1,4 @@
-# repo-quiz
+# repoQuizzer
 
 A repository-aware quiz generator for code comprehension. Paste a public GitHub repo,
 pick a file or folder scope, and get a short quiz (3 MCQs + one coding task) generated
@@ -7,6 +7,11 @@ straight from that code, with explanations and locally saved history.
 After completing a round, you can generate **more questions** from the same scope (the
 LLM is instructed to avoid repeats) or **finish** to see a session summary with
 personalised improvement feedback.
+
+### Live Demo
+
+- **Frontend:** [repoquizzer.vercel.app](https://repo-quizzer-3zuw.vercel.app/)
+- **Backend API:** [repoquizzer.onrender.com](https://repoquizzer.onrender.com)
 
 ## Stack
 
@@ -100,7 +105,7 @@ so they just need to be able to reach each other.
 
    | Name | Value |
    |---|---|
-   | `NEXT_PUBLIC_API_BASE` | `https://your-backend-url` |
+   | `NEXT_PUBLIC_API_BASE` | `https://repoquizzer.onrender.com` |
 
 6. Deploy. Vercel builds a static Next.js site with client-side routing
    (the `vercel.json` rewrite handles SPA fallback).
@@ -143,7 +148,7 @@ hosts — quiz history will be lost on redeploy. For persistent storage, swap
 | Backend `.env` | `NVIDIA_API_KEY` | `sk-or-v1-...` |
 | Backend `.env` | `NVIDIA_BASE_URL` | `https://openrouter.ai/api/v1` |
 | Backend `.env` | `LLAMA_MODEL` | `meta-llama/llama-3.3-70b-instruct` |
-| Frontend (deploy host) | `NEXT_PUBLIC_API_BASE` | `https://your-backend.onrender.com` |
+| Frontend (deploy host) | `NEXT_PUBLIC_API_BASE` | `https://repoquizzer.onrender.com` |
 
 ## Features
 

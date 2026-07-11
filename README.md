@@ -83,6 +83,68 @@ Visit `http://localhost:3000`. The frontend calls the backend at
 `http://localhost:8000` by default — override with `NEXT_PUBLIC_API_BASE` in a
 `frontend/.env.local` if you run the backend elsewhere.
 
+## Deployment
+
+The frontend and backend are **separate services** — the frontend is a static
+Next.js app (hostable on Vercel, Netlify, etc.) and the backend is a Python API
+(hostable on Railway, Render, Fly.io, a VPS, etc.). They communicate over HTTP,
+so they just need to be able to reach each other.
+
+### Frontend (Vercel)
+
+1. Push this repo to GitHub.
+2. In the [Vercel dashboard](https://vercel.com), import the repo.
+3. Set **Root Directory** to `frontend`.
+4. Vercel auto-detects Next.js — the build settings should be correct.
+5. Go to **Settings → Environment Variables** and add:
+
+   | Name | Value |
+   |---|---|
+   | `NEXT_PUBLIC_API_BASE` | `https://your-backend-url` |
+
+6. Deploy. Vercel builds a static Next.js site with client-side routing
+   (the `vercel.json` rewrite handles SPA fallback).
+
+### Frontend (Netlify)
+
+1. In the [Netlify dashboard](https://netlify.com), import the repo.
+2. Set **Base directory** to `frontend`.
+3. Set **Build command** to `npm install && npm run build`.
+4. Set **Publish directory** to `.next`.
+5. Go to **Site settings → Environment variables** and add:
+
+   | Name | Value |
+   |---|---|
+   | `NEXT_PUBLIC_API_BASE` | `https://your-backend-url` |
+
+6. Deploy. The `netlify.toml` at the repo root handles SPA redirect fallback.
+
+### Backend
+
+The backend is a standard Python/FastAPI app. Any host that supports Python
+will work:
+
+- **Railway** — add a service from this repo, set the root directory to `backend`,
+  and add the env vars from `backend/.env`.
+- **Render** — create a "Web Service", point to this repo, set root directory
+  to `backend`, build command to `pip install -r requirements.txt`, and start
+  command to `uvicorn main:app --host 0.0.0.0 --port $PORT`.
+- **Fly.io** — write a `Dockerfile` for the backend directory.
+
+Make sure `git` is available in the deployment environment (the backend clones
+repos at runtime). Also note that SQLite storage is ephemeral on most cloud
+hosts — quiz history will be lost on redeploy. For persistent storage, swap
+`db.py` to use PostgreSQL or a hosted SQLite service.
+
+### Environment variable summary
+
+| Where | Variable | Example |
+|---|---|---|
+| Backend `.env` | `NVIDIA_API_KEY` | `sk-or-v1-...` |
+| Backend `.env` | `NVIDIA_BASE_URL` | `https://openrouter.ai/api/v1` |
+| Backend `.env` | `LLAMA_MODEL` | `meta-llama/llama-3.3-70b-instruct` |
+| Frontend (deploy host) | `NEXT_PUBLIC_API_BASE` | `https://your-backend.onrender.com` |
+
 ## Features
 
 | Feature | Description |

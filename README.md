@@ -20,12 +20,16 @@ personalised improvement feedback.
 - **Repo ingestion:** `git clone --depth 1` of the target repo
 - **Question generation & grading:** `meta-llama/llama-3.3-70b-instruct` via
   [OpenRouter](https://openrouter.ai) (OpenAI-compatible endpoint, `openai` Python SDK)
-- **Storage:** SQLite (`backend/storage/quiz_history.db`)
+- **RAG embeddings:** `all-MiniLM-L6-v2` via
+  [sentence-transformers](https://www.sbert.net/) (runs locally, no embeddings API key needed)
+- **Vector store:** [ChromaDB](https://www.trychroma.com/) (persistent, HTTP client/server mode in Docker)
+- **Storage:** PostgreSQL via SQLAlchemy + Alembic migrations (SQLite fallback for local dev)
 
 ## How it works
 
-1. **Import** — backend shallow-clones the repo URL into `backend/storage/repos/`
-   and walks the tree, filtering to recognised code file extensions.
+1. **Import** — backend shallow-clones the repo URL into `backend/storage/repos/`,
+   walks the tree, filtering to recognised code file extensions, then chunks every
+   file and stores the embeddings in ChromaDB for later retrieval.
 2. **Scope** — the frontend renders that tree; the user picks one file or one folder.
 3. **Generate** — backend reads every code file in the scope (capped in size), builds
    one text blob with file markers, and prompts the LLM to return strict JSON: 3 MCQs
@@ -41,7 +45,11 @@ personalised improvement feedback.
 7. **Finish** — when done, a session summary shows overall score, per-round breakdown,
    every missed question with its explanation, and personalised feedback on areas
    to improve.
-8. **History** — every attempt (quiz, answers, score) is saved to SQLite and listed
+8. **Chat with the repo** — after importing, users can ask free-form questions about
+   the codebase. The backend embeds the question, runs a similarity search against
+   the stored chunks, and feeds the top 5 results as context to the LLM for an
+   answer with file citations.
+9. **History** — every attempt (quiz, answers, score) is saved to PostgreSQL and listed
    on `/history` as a commit-log style timeline you can expand.
 
 ## Setup
@@ -53,7 +61,30 @@ personalised improvement feedback.
 - `git` on PATH (used for cloning repos)
 - An [OpenRouter](https://openrouter.ai) API key
 
-### Backend
+### Quick start (Docker Compose)
+
+The fastest way to get the full stack running locally — PostgreSQL, ChromaDB, and
+the FastAPI backend — in one command:
+
+```bash
+cp backend/.env.example backend/.env   # paste your NVIDIA_API_KEY
+docker compose up --build
+```
+
+This starts three containers:
+- **postgres** — `localhost:5432` (healthchecked, persistent volume)
+- **chroma** — internal only, backend connects via service name
+- **backend** — `localhost:8000` (runs Alembic migration then uvicorn)
+
+Then start the frontend as usual:
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+### Manual setup
+
+#### Backend
 
 ```bash
 cd backend
@@ -73,10 +104,11 @@ LLAMA_MODEL=meta-llama/llama-3.3-70b-instruct
 Start the server:
 
 ```bash
+alembic upgrade head      # create/migrate tables
 uvicorn main:app --reload --port 8000
 ```
 
-### Frontend
+#### Frontend
 
 ```bash
 cd frontend
@@ -129,17 +161,18 @@ so they just need to be able to reach each other.
 The backend is a standard Python/FastAPI app. Any host that supports Python
 will work:
 
+- **Docker Compose** — run `docker compose up --build` (see Quick start above). This
+  brings up Postgres, ChromaDB, and the backend with persistent volumes.
 - **Railway** — add a service from this repo, set the root directory to `backend`,
   and add the env vars from `backend/.env`.
 - **Render** — create a "Web Service", point to this repo, set root directory
   to `backend`, build command to `pip install -r requirements.txt`, and start
-  command to `uvicorn main:app --host 0.0.0.0 --port $PORT`.
+  command to `alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT`.
 - **Fly.io** — write a `Dockerfile` for the backend directory.
 
 Make sure `git` is available in the deployment environment (the backend clones
-repos at runtime). Also note that SQLite storage is ephemeral on most cloud
-hosts — quiz history will be lost on redeploy. For persistent storage, swap
-`db.py` to use PostgreSQL or a hosted SQLite service.
+repos at runtime). Set `DATABASE_URL` to a Postgres connection string for
+persistent storage in production.
 
 ### Environment variable summary
 
@@ -148,6 +181,9 @@ hosts — quiz history will be lost on redeploy. For persistent storage, swap
 | Backend `.env` | `NVIDIA_API_KEY` | `sk-or-v1-...` |
 | Backend `.env` | `NVIDIA_BASE_URL` | `https://openrouter.ai/api/v1` |
 | Backend `.env` | `LLAMA_MODEL` | `meta-llama/llama-3.3-70b-instruct` |
+| Backend (deploy host) | `DATABASE_URL` | `postgresql://user:pass@host:5432/db` |
+| Backend (Docker) | `CHROMA_HOST` | `chroma` |
+| Backend (Docker) | `CHROMA_PORT` | `8000` |
 | Frontend (deploy host) | `NEXT_PUBLIC_API_BASE` | `https://repoquizzer.onrender.com` |
 
 ## Features
@@ -162,7 +198,8 @@ hosts — quiz history will be lost on redeploy. For persistent storage, swap
 | **Multiple rounds** | Generate new questions from the same scope without re-importing |
 | **Previous-question exclusion** | The LLM is told which questions were already asked so it picks new ones |
 | **Session summary** | Score breakdown, missed-question review, and improvement feedback |
-| **Quiz history** | All attempts saved to SQLite, browsable with expand/collapse detail |
+| **Chat with the repo** | Ask free-form questions about the codebase; answered via RAG with file citations |
+| **Quiz history** | All attempts saved to PostgreSQL, browsable with expand/collapse detail |
 | **Fallback quiz** | If the LLM is unavailable, a regex-based fallback generates basic structural questions |
 
 ## Configuration
@@ -174,6 +211,9 @@ Key environment variables in `backend/.env`:
 | `NVIDIA_API_KEY` | *(required)* | OpenRouter API key |
 | `NVIDIA_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible API base |
 | `LLAMA_MODEL` | `meta-llama/llama-3.3-70b-instruct` | Model to use for generation and grading |
+| `DATABASE_URL` | `sqlite:///...` | Postgres URL for production; omit for local SQLite |
+| `CHROMA_HOST` | *(empty — local mode)* | Set to use Chroma HTTP server (e.g. `chroma` in Docker Compose) |
+| `CHROMA_PORT` | `8000` | Chroma HTTP port (only used when `CHROMA_HOST` is set) |
 
 Backend hard limits (in `main.py` / `quiz_generator.py`):
 
@@ -185,24 +225,62 @@ Backend hard limits (in `main.py` / `quiz_generator.py`):
 | `MAX_FILE_BYTES` | 60 KB | Skip individual files larger than this |
 | `MAX_TOTAL_CHUNK_CHARS` | 10,000 | Cap on combined code sent to the LLM per quiz |
 
+### RAG — Chat with the repo
+
+After importing a repo, embeddings are generated for every code file and stored in
+ChromaDB (single collection, filtered by `repo_id` metadata). The `/ask` endpoint
+runs a full RAG pipeline:
+
+1. Embed the user's question with `all-MiniLM-L6-v2` (local, ~200ms).
+2. Query ChromaDB for the 5 most similar chunks (`MAX_DISTANCE = 0.7` cosine).
+3. Build a context blob with `file_path` headers for each chunk.
+4. Send context + question to the LLM and return the answer with source citations.
+
+```bash
+curl -X POST https://repoquizzer.onrender.com/ask \
+  -H "Content-Type: application/json" \
+  -d '{"repo_id": "my-repo-abc123def456", "question": "What does the authenticate function do?"}'
+```
+
+Response:
+
+```json
+{
+  "answer": "The authenticate function verifies user credentials...",
+  "sources": ["auth.py", "middleware.py"]
+}
+```
+
 ## Project structure
 
 ```
 repoQuizzer/
+├── docker-compose.yml          # Local dev: postgres + chroma + backend
 ├── backend/
 │   ├── main.py                 # FastAPI routes + async orchestration
 │   ├── config.py               # Env vars, paths, limits
-│   ├── db.py                   # SQLite init + queries
+│   ├── models.py               # SQLAlchemy ORM models (Repo, Attempt, RepoChunk)
+│   ├── db.py                   # SQLAlchemy session-based queries
+│   ├── alembic.ini             # Alembic config
+│   ├── alembic/                # Database migrations
+│   │   ├── env.py
+│   │   └── versions/
+│   ├── Dockerfile              # Python 3.12-slim + git for cloning
 │   ├── requirements.txt
 │   ├── .env                    # API keys and model config
+│   ├── .env.example            # Documents all env vars
 │   ├── services/
 │   │   ├── repo_service.py     # Clone, tree building, file collection
 │   │   ├── chunker.py          # Builds the code context blob
+│   │   ├── embedder.py         # Chunking + sentence-transformers + Chroma storage
+│   │   ├── ask.py              # RAG pipeline: embed question → Chroma → LLM answer
 │   │   ├── quiz_generator.py   # LLM quiz generation + fallback
 │   │   └── grader.py           # MCQ grading (pure) + LLM coding grading
+│   ├── tests/
+│   │   ├── test_embedder.py    # Chunking unit tests
+│   │   └── test_ask.py         # RAG pipeline unit tests (mocked Chroma + LLM)
 │   └── storage/
-│       ├── repos/              # Cloned repos
-│       └── quiz_history.db     # SQLite database
+│       └── repos/              # Cloned repos
 └── frontend/
     ├── app/
     │   ├── layout.tsx          # Root layout with nav header
@@ -221,9 +299,13 @@ repoQuizzer/
 - Only public GitHub repos, cloned shallow (`--depth 1`) — no auth, no private repos.
 - Individual files over ~60 KB are skipped; total code sent to the LLM per quiz is
   capped (~10K chars) so quizzes stay fast and cheap to generate.
-- No user accounts — history is local to whoever's machine is running the backend.
+- No user accounts — quiz history is shared per database instance (Postgres in production, local SQLite for dev).
 - Coding-task grading is LLM-judged, not sandboxed code execution — it's checking
   reasoning/correctness against a reference solution, not running tests.
+- RAG uses a local embedding model (`all-MiniLM-L6-v2`, 384-dim) — no embeddings
+  API key required. The model is downloaded on first use and cached by `sentence-transformers`.
+- ChromaDB stores vectors on disk (local mode) or via HTTP (Docker mode). No
+  external vector service is needed.
 - OpenRouter free-tier requests may take 10-45s depending on load; timeouts are set
   generously to accommodate this.
 
@@ -234,3 +316,5 @@ repoQuizzer/
 - Export quiz history, or a leaderboard if this became multi-user.
 - Support private repos via GitHub token authentication.
 - Adaptive difficulty based on per-topic performance across rounds.
+- Cross-repo search — query across multiple imported repos at once.
+- Chat UI in the frontend to interact with the `/ask` endpoint conversationally.

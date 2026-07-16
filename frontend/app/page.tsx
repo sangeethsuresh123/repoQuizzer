@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { api } from "@/lib/api";
 import { TreeNode } from "@/lib/types";
 import FileTree from "@/components/FileTree";
@@ -10,6 +11,7 @@ export default function HomePage() {
   const router = useRouter();
   const [repoUrl, setRepoUrl] = useState("");
   const [tree, setTree] = useState<TreeNode | null>(null);
+  const [repoId, setRepoId] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -18,12 +20,14 @@ export default function HomePage() {
     e.preventDefault();
     setError(null);
     setTree(null);
+    setRepoId(null);
     setSelectedPath(null);
     if (!repoUrl.trim()) return;
     setLoading(true);
     try {
-      const { tree } = await api.importRepo(repoUrl.trim());
+      const { tree, repo_id } = await api.importRepo(repoUrl.trim());
       setTree(tree);
+      setRepoId(repo_id);
     } catch (err: any) {
       setError(err.message || "Could not import that repo.");
     } finally {
@@ -81,13 +85,23 @@ export default function HomePage() {
           <div className="rounded-md border border-border bg-elevated p-2 max-h-96 overflow-y-auto">
             <FileTree node={tree} selectedPath={selectedPath} onSelect={setSelectedPath} />
           </div>
-          <button
-            onClick={handleStartQuiz}
-            disabled={selectedPath === null}
-            className="rounded-md bg-accent px-5 py-2 font-mono text-sm font-medium text-bg disabled:opacity-40"
-          >
-            Generate quiz →
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={handleStartQuiz}
+              disabled={selectedPath === null}
+              className="rounded-md bg-accent px-5 py-2 font-mono text-sm font-medium text-bg disabled:opacity-40"
+            >
+              Generate quiz →
+            </button>
+            {repoId && (
+              <Link
+                href={`/chat?repo_id=${encodeURIComponent(repoId)}`}
+                className="rounded-md border border-accent/40 bg-accent/10 px-5 py-2 font-mono text-sm font-medium text-accent hover:bg-accent/20 transition-colors"
+              >
+                Chat with repo →
+              </Link>
+            )}
+          </div>
         </div>
       )}
     </div>

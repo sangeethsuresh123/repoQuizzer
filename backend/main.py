@@ -8,7 +8,9 @@ from pydantic import BaseModel
 
 import config
 import db
-from services.repo_service import clone_repo, build_tree, collect_scope_files, RepoError
+from services.repo_service import clone_repo, build_tree, collect_scope_files, slug_for_url, RepoError
+from services.embedder import embed_repo
+from services.ask import ask
 from services.chunker import build_context_blob
 from services.quiz_generator import (
     generate_quiz, generate_fallback_quiz, QuizGenerationError, QUIZ_TIMEOUT_SECONDS,
@@ -54,14 +56,25 @@ class SubmitRequest(BaseModel):
     coding_answer: str
 
 
+class AskRequest(BaseModel):
+    repo_id: str
+    question: str
+
+
 @app.post("/api/repo/import")
 async def import_repo(req: ImportRequest):
     try:
         repo_path = await asyncio.to_thread(clone_repo, req.repo_url)
         tree = await asyncio.to_thread(build_tree, repo_path)
+        repo_id = slug_for_url(req.repo_url)
+        db.upsert_repo(repo_id, req.repo_url)
+        try:
+            await asyncio.to_thread(embed_repo, repo_id, req.repo_url, repo_path)
+        except Exception as e:
+            logger.warning("Embedding failed (chat will be unavailable): %s", e)
     except RepoError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"tree": tree}
+    return {"tree": tree, "repo_id": repo_id}
 
 
 async def _do_generate(req: GenerateRequest) -> dict:
@@ -169,3 +182,13 @@ def history_detail(attempt_id: int):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/api/ask")
+async def ask_question(req: AskRequest):
+    try:
+        result = await asyncio.to_thread(ask, req.repo_id, req.question)
+    except Exception as e:
+        logger.error("ask failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    return result

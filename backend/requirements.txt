@@ -4,3 +4,9 @@ openai
 httpx>=0.23.0,<0.29
 pydantic
 python-dotenv
+sqlalchemy>=2.0,<3.0
+alembic>=1.13,<2.0
+psycopg2-binary>=2.9,<3.0
+chromadb>=0.5,<1.0
+sentence-transformers>=3.0,<4.0
+pytest>=8.0,<9.0

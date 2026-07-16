@@ -12,7 +12,7 @@ class RepoError(Exception):
     pass
 
 
-def _slug_for_url(repo_url: str) -> str:
+def slug_for_url(repo_url: str) -> str:
     h = hashlib.sha1(repo_url.encode()).hexdigest()[:12]
     name = repo_url.rstrip("/").split("/")[-1].replace(".git", "")
     return f"{name}-{h}"
@@ -23,7 +23,7 @@ def clone_repo(repo_url: str) -> Path:
     if "github.com" not in repo_url:
         raise RepoError("Only public GitHub repository URLs are supported right now.")
 
-    dest = REPOS_DIR / _slug_for_url(repo_url)
+    dest = REPOS_DIR / slug_for_url(repo_url)
     if dest.exists() and any(dest.iterdir()):
         return dest  # already cloned, reuse it
 

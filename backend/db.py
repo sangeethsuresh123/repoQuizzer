@@ -1,72 +1,91 @@
-import sqlite3
 import json
 from contextlib import contextmanager
-from config import DB_PATH
 
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
 
-@contextmanager
-def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+from config import DATABASE_URL
+from models import Base, Repo, Attempt
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(bind=engine)
 
 
 def init_db():
-    with get_conn() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS attempts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                repo_url TEXT NOT NULL,
-                scope_path TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                quiz_json TEXT NOT NULL,
-                answers_json TEXT NOT NULL,
-                score INTEGER NOT NULL,
-                max_score INTEGER NOT NULL
-            )
-            """
-        )
+    pass  # schema managed by Alembic — run `alembic upgrade head` before starting
+
+
+@contextmanager
+def get_session() -> Session:
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def upsert_repo(repo_id: str, repo_url: str) -> None:
+    with get_session() as session:
+        existing = session.get(Repo, repo_id)
+        if existing is None:
+            session.add(Repo(id=repo_id, url=repo_url))
+        # If it already exists, nothing to do — just ensure the row is there.
 
 
 def save_attempt(repo_url, scope_path, created_at, quiz, answers, score, max_score):
-    with get_conn() as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO attempts (repo_url, scope_path, created_at, quiz_json, answers_json, score, max_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                repo_url,
-                scope_path,
-                created_at,
-                json.dumps(quiz),
-                json.dumps(answers),
-                score,
-                max_score,
-            ),
+    with get_session() as session:
+        attempt = Attempt(
+            repo_url=repo_url,
+            scope_path=scope_path,
+            created_at=created_at,
+            quiz_json=json.dumps(quiz),
+            answers_json=json.dumps(answers),
+            score=score,
+            max_score=max_score,
         )
-        return cur.lastrowid
+        session.add(attempt)
+        session.flush()  # populate attempt.id
+        return attempt.id
 
 
 def list_attempts():
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, repo_url, scope_path, created_at, score, max_score FROM attempts ORDER BY id DESC"
-        ).fetchall()
-        return [dict(r) for r in rows]
+    with get_session() as session:
+        rows = (
+            session.execute(
+                select(Attempt).order_by(Attempt.id.desc())
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            {
+                "id": r.id,
+                "repo_url": r.repo_url,
+                "scope_path": r.scope_path,
+                "created_at": r.created_at,
+                "score": r.score,
+                "max_score": r.max_score,
+            }
+            for r in rows
+        ]
 
 
 def get_attempt(attempt_id: int):
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
-        if not row:
+    with get_session() as session:
+        attempt = session.get(Attempt, attempt_id)
+        if not attempt:
             return None
-        data = dict(row)
-        data["quiz"] = json.loads(data.pop("quiz_json"))
-        data["answers"] = json.loads(data.pop("answers_json"))
-        return data
+        return {
+            "id": attempt.id,
+            "repo_url": attempt.repo_url,
+            "scope_path": attempt.scope_path,
+            "created_at": attempt.created_at,
+            "score": attempt.score,
+            "max_score": attempt.max_score,
+            "quiz": json.loads(attempt.quiz_json),
+            "answers": json.loads(attempt.answers_json),
+        }

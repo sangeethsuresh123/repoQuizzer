@@ -65,16 +65,14 @@ def ask(repo_id: str, question: str) -> dict:
 
     # 4. Build the context block for the LLM.
     context_parts: list[str] = []
-    sources: list[dict] = []
+    source_files: list[str] = []
+    seen_files: set[str] = set()
     for doc, meta, dist in zip(docs, metas, distances):
         header = f"[FILE: {meta['file_path']} | chunk {meta['chunk_index']}]"
         context_parts.append(f"{header}\n{doc}")
-        snippet = doc[:200].replace("\n", " ").strip()
-        sources.append({
-            "file_path": meta["file_path"],
-            "chunk_index": meta["chunk_index"],
-            "snippet": snippet,
-        })
+        if meta["file_path"] not in seen_files:
+            source_files.append(meta["file_path"])
+            seen_files.add(meta["file_path"])
 
     context_block = "\n\n---\n\n".join(context_parts)
 
@@ -88,7 +86,7 @@ def ask(repo_id: str, question: str) -> dict:
     if _client is None:
         return {
             "answer": "LLM is not configured on the backend. Cannot generate an answer.",
-            "sources": sources,
+            "sources": source_files,
         }
 
     try:
@@ -110,4 +108,4 @@ def ask(repo_id: str, question: str) -> dict:
             "Please try again later."
         )
 
-    return {"answer": answer, "sources": sources}
+    return {"answer": answer, "sources": source_files}

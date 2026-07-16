@@ -116,9 +116,7 @@ class TestAskGoodMatch:
 
         assert "not configured" in result["answer"]
         assert len(result["sources"]) == 1
-        assert result["sources"][0]["file_path"] == "db.py"
-        assert result["sources"][0]["chunk_index"] == 0
-        assert "snippet" in result["sources"][0]
+        assert result["sources"][0] == "db.py"
 
     @patch("services.ask._client")
     @patch("services.ask._get_chroma")
@@ -148,9 +146,9 @@ class TestAskGoodMatch:
         result = ask("repo-abc", "How does the database get initialized?")
 
         assert "create_all" in result["answer"]
-        assert len(result["sources"]) == 2
-        assert result["sources"][0]["file_path"] == "db.py"
-        assert result["sources"][1]["file_path"] == "db.py"
+        # Both chunks are from db.py — deduplicated to one entry.
+        assert len(result["sources"]) == 1
+        assert result["sources"][0] == "db.py"
         # LLM was called once.
         mock_client.chat.completions.create.assert_called_once()
 

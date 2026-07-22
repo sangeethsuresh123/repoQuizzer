@@ -10,6 +10,7 @@ import config
 import db
 from services.repo_service import clone_repo, build_tree, collect_scope_files, slug_for_url, RepoError
 from services.tech_detector import detect_tech
+from services.dep_graph import build_dep_graph
 from services.chunker import build_context_blob
 from services.quiz_generator import (
     generate_quiz, generate_fallback_quiz, QuizGenerationError, QUIZ_TIMEOUT_SECONDS,
@@ -63,9 +64,10 @@ async def import_repo(req: ImportRequest):
         repo_id = slug_for_url(req.repo_url)
         db.upsert_repo(repo_id, req.repo_url)
         technologies = await asyncio.to_thread(detect_tech, repo_path)
+        dep_graph = await asyncio.to_thread(build_dep_graph, repo_path)
     except RepoError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"tree": tree, "repo_id": repo_id, "technologies": technologies}
+    return {"tree": tree, "repo_id": repo_id, "technologies": technologies, "dep_graph": dep_graph}
 
 
 async def _do_generate(req: GenerateRequest) -> dict:

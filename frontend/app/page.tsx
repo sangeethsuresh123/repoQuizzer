@@ -5,8 +5,11 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { TreeNode } from "@/lib/types";
 import FileTree from "@/components/FileTree";
+import DependencyGraph from "@/components/DependencyGraph";
 
 type Tech = { name: string; url: string };
+type DepNode = { id: string; path: string; language: string; color: string };
+type DepEdge = { source: string; target: string };
 
 export default function HomePage() {
   const router = useRouter();
@@ -14,6 +17,7 @@ export default function HomePage() {
   const [tree, setTree] = useState<TreeNode | null>(null);
   const [repoId, setRepoId] = useState<string | null>(null);
   const [technologies, setTechnologies] = useState<Tech[]>([]);
+  const [depGraph, setDepGraph] = useState<{ nodes: DepNode[]; edges: DepEdge[] }>({ nodes: [], edges: [] });
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,19 +28,25 @@ export default function HomePage() {
     setTree(null);
     setRepoId(null);
     setTechnologies([]);
+    setDepGraph({ nodes: [], edges: [] });
     setSelectedPath(null);
     if (!repoUrl.trim()) return;
     setLoading(true);
     try {
-      const { tree, repo_id, technologies } = await api.importRepo(repoUrl.trim());
+      const { tree, repo_id, technologies, dep_graph } = await api.importRepo(repoUrl.trim());
       setTree(tree);
       setRepoId(repo_id);
       setTechnologies(technologies || []);
+      setDepGraph(dep_graph || { nodes: [], edges: [] });
     } catch (err: any) {
       setError(err.message || "Could not import that repo.");
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleGraphSelect(path: string) {
+    setSelectedPath(path || null);
   }
 
   function handleStartQuiz() {
@@ -113,10 +123,34 @@ export default function HomePage() {
             </div>
           )}
 
+          {depGraph.nodes.length > 0 && (
+            <div className="space-y-2">
+              <h2 className="font-mono text-sm uppercase tracking-wide text-dim">
+                Dependency graph
+              </h2>
+              <p className="text-xs text-dim">
+                Click a node to select that file for the quiz. Drag to rearrange.
+              </p>
+              <DependencyGraph
+                nodes={depGraph.nodes}
+                edges={depGraph.edges}
+                onSelect={handleGraphSelect}
+                selectedPath={selectedPath}
+              />
+            </div>
+          )}
+
           <div className="space-y-4">
-            <h2 className="font-mono text-sm uppercase tracking-wide text-dim">
-              Select a scope for the quiz
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-mono text-sm uppercase tracking-wide text-dim">
+                File tree
+              </h2>
+              {selectedPath && (
+                <span className="font-mono text-xs text-accent">
+                  selected: {selectedPath}
+                </span>
+              )}
+            </div>
             <div className="rounded-md border border-border bg-elevated p-2 max-h-96 overflow-y-auto">
               <FileTree node={tree} selectedPath={selectedPath} onSelect={setSelectedPath} />
             </div>

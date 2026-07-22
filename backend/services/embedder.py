@@ -29,20 +29,30 @@ def _tokenize(text: str) -> list[str]:
     return text.lower().split()
 
 
-def _build_vocab(texts: list[str], max_features: int = 2048) -> dict[str, int]:
-    counter: Counter = Counter()
+def _build_vocab(texts: list[str]) -> tuple[dict[str, int], dict[str, float]]:
+    n = len(texts)
+    doc_freq: Counter = Counter()
+    all_tokens: Counter = Counter()
     for t in texts:
-        counter.update(_tokenize(t))
-    return {word: i for i, (word, _) in enumerate(counter.most_common(max_features))}
+        tokens = set(_tokenize(t))
+        doc_freq.update(tokens)
+        all_tokens.update(_tokenize(t))
+    vocab = {word: i for i, (word, _) in enumerate(all_tokens.most_common(8192))}
+    idf = {word: math.log((n + 1) / (1 + freq)) + 1 for word, freq in doc_freq.items()}
+    return vocab, idf
 
 
-def _vectorize(text: str, vocab: dict[str, int]) -> dict[int, float]:
+def _vectorize(text: str, vocab: dict[str, int], idf: dict[str, float]) -> dict[int, float]:
     tokens = _tokenize(text)
     if not tokens or not vocab:
         return {}
     tf = Counter(tokens)
     total = len(tokens)
-    return {vocab[tok]: count / total for tok, count in tf.items() if tok in vocab}
+    vec: dict[int, float] = {}
+    for tok, count in tf.items():
+        if tok in vocab:
+            vec[vocab[tok]] = (count / total) * idf.get(tok, 1.0)
+    return vec
 
 
 def _cosine(a: dict[int, float], b: dict[int, float]) -> float:
@@ -77,15 +87,15 @@ def search_chunks(repo_id: str, query_text: str, top_k: int = 5) -> list[dict]:
         return []
 
     texts = [r.text for r in rows]
-    vocab = _build_vocab(texts)
+    vocab, idf = _build_vocab(texts)
     if not vocab:
         return []
 
-    q_vec = _vectorize(query_text, vocab)
+    q_vec = _vectorize(query_text, vocab, idf)
 
     scored = []
     for row in rows:
-        c_vec = _vectorize(row.text, vocab)
+        c_vec = _vectorize(row.text, vocab, idf)
         sim = _cosine(q_vec, c_vec)
         scored.append((sim, row))
 

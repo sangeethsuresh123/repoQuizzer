@@ -11,7 +11,7 @@ from config import LLAMA_MODEL
 
 logger = logging.getLogger("repoquiz.ask")
 
-MIN_SCORE = 0.3
+MIN_SCORE = 0.05
 TOP_K = 5
 
 ASK_SYSTEM_PROMPT = """\

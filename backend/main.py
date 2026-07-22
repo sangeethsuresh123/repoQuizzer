@@ -184,6 +184,24 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/debug/chunks/{repo_id:path}")
+def debug_chunks(repo_id: str):
+    from services.embedder import _normalize_repo_id
+    repo_id = _normalize_repo_id(repo_id)
+    try:
+        with db.get_session() as session:
+            from models import RepoChunk
+            count = session.query(RepoChunk).filter(RepoChunk.repo_id == repo_id).count()
+            sample = session.query(RepoChunk).filter(RepoChunk.repo_id == repo_id).limit(2).all()
+            return {
+                "repo_id": repo_id,
+                "chunk_count": count,
+                "samples": [{"file_path": s.file_path, "text_len": len(s.text), "text_preview": s.text[:200]} for s in sample],
+            }
+    except Exception as e:
+        return {"repo_id": repo_id, "error": str(e)}
+
+
 @app.post("/api/ask")
 async def ask_question(req: AskRequest):
     try:

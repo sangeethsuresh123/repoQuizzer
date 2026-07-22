@@ -45,7 +45,7 @@ class TestAskRelevanceThreshold:
     @patch("services.ask.search_chunks")
     def test_weak_match_below_threshold(self, mock_search):
         mock_search.return_value = [
-            {"file_path": "x.py", "chunk_index": 0, "text": "some code", "score": 0.1},
+            {"file_path": "x.py", "chunk_index": 0, "text": "some code", "score": 0.01},
         ]
 
         from services.ask import ask

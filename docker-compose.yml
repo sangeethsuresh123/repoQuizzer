@@ -15,15 +15,6 @@ services:
       timeout: 3s
       retries: 5
 
-  chroma:
-    image: chromadb/chroma:latest
-    expose:
-      - "8000"          # internal only — backend connects via service name
-    volumes:
-      - chromadata:/chroma/chroma
-    environment:
-      - IS_PERSISTENT=TRUE
-
   backend:
     build: ./backend
     ports:
@@ -31,12 +22,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      chroma:
-        condition: service_started
     environment:
       DATABASE_URL: postgresql://repoquizzer:repoquizzer@postgres:5432/repoquizzer
-      CHROMA_HOST: chroma
-      CHROMA_PORT: "8000"
       NVIDIA_API_KEY: ${NVIDIA_API_KEY}
       NVIDIA_BASE_URL: ${NVIDIA_BASE_URL}
       LLAMA_MODEL: ${LLAMA_MODEL}
@@ -46,5 +33,4 @@ services:
 
 volumes:
   pgdata:
-  chromadata:
   repos:

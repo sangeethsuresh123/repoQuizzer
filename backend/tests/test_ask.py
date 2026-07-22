@@ -1,47 +1,17 @@
-"""Tests for services.ask — RAG endpoint logic with mocked model + LLM."""
+"""Tests for services.ask — RAG endpoint logic with TF-IDF retrieval."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 
-# ── Fixtures / helpers ────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────
 
-def _fake_chroma_results(docs, metas, distances):
-    """Return the dict shape that Chroma collection.query() produces."""
-    return {
-        "documents": [docs],
-        "metadatas": [metas],
-        "distances": [distances],
-        "ids": [[]],
-        "embeddings": None,
-        "uris": None,
-        "data": None,
-    }
-
-
-class _FakeNumpyArray:
-    """Minimal stand-in so .tolist() works on the mock encode output."""
-    def __init__(self, data):
-        self._data = data
-    def tolist(self):
-        return self._data
-
-
-def _mock_model():
-    """Return a mock sentence-transformers model whose encode() returns a fixed vector."""
-    m = MagicMock()
-    m.encode.return_value = _FakeNumpyArray([[0.1] * 384])
-    return m
-
-
-def _mock_chroma(results):
-    """Return a mock chromadb client whose collection.query() returns *results*."""
-    collection = MagicMock()
-    collection.query.return_value = results
-    client = MagicMock()
-    client.get_collection.return_value = collection
-    return client
+def _mock_search_results(results):
+    """Return a fake search_chunks function that returns *results*."""
+    def _search(repo_id, query_text, top_k=5):
+        return results
+    return _search
 
 
 def _mock_llm_response(answer_text="The answer is 42."):
@@ -55,17 +25,16 @@ def _mock_llm_response(answer_text="The answer is 42."):
 
 # ── Tests ─────────────────────────────────────────────────────────────
 
+from unittest.mock import MagicMock
+
+
 class TestAskRelevanceThreshold:
-    """When Chroma returns no matches above threshold, /ask returns the
+    """When search returns no chunks above threshold, /ask returns the
     'couldn't find anything relevant' response."""
 
-    @patch("services.ask._get_chroma")
-    @patch("services.ask._get_model")
-    def test_no_matches_empty_chroma(self, mock_model_fn, mock_chroma_fn):
-        mock_model_fn.return_value = _mock_model()
-        mock_chroma_fn.return_value = _mock_chroma(
-            _fake_chroma_results([], [], [])
-        )
+    @patch("services.ask.search_chunks")
+    def test_no_chunks(self, mock_search):
+        mock_search.return_value = []
 
         from services.ask import ask
         result = ask("repo-abc", "What does init_db do?")
@@ -73,18 +42,11 @@ class TestAskRelevanceThreshold:
         assert "couldn't find anything relevant" in result["answer"]
         assert result["sources"] == []
 
-    @patch("services.ask._get_chroma")
-    @patch("services.ask._get_model")
-    def test_weak_match_returns_not_relevant(self, mock_model_fn, mock_chroma_fn):
-        """Distance > MAX_DISTANCE (0.7) → not relevant."""
-        mock_model_fn.return_value = _mock_model()
-        mock_chroma_fn.return_value = _mock_chroma(
-            _fake_chroma_results(
-                docs=["some random code"],
-                metas=[{"repo_id": "repo-abc", "file_path": "x.py", "chunk_index": 0}],
-                distances=[0.9],  # above 0.7 threshold
-            )
-        )
+    @patch("services.ask.search_chunks")
+    def test_weak_match_below_threshold(self, mock_search):
+        mock_search.return_value = [
+            {"file_path": "x.py", "chunk_index": 0, "text": "some code", "score": 0.1},
+        ]
 
         from services.ask import ask
         result = ask("repo-abc", "What does init_db do?")
@@ -94,22 +56,15 @@ class TestAskRelevanceThreshold:
 
 
 class TestAskGoodMatch:
-    """When Chroma returns relevant chunks and the LLM is configured,
+    """When search returns relevant chunks and the LLM is configured,
     /ask returns a properly shaped answer + sources object."""
 
     @patch("services.ask._client", None)
-    @patch("services.ask._get_chroma")
-    @patch("services.ask._get_model")
-    def test_no_llm_returns_sources(self, mock_model_fn, mock_chroma_fn):
-        """LLM client is None → answer says LLM not configured, sources still returned."""
-        mock_model_fn.return_value = _mock_model()
-        mock_chroma_fn.return_value = _mock_chroma(
-            _fake_chroma_results(
-                docs=["def init_db():\n    pass"],
-                metas=[{"repo_id": "repo-abc", "file_path": "db.py", "chunk_index": 0}],
-                distances=[0.3],  # well within threshold
-            )
-        )
+    @patch("services.ask.search_chunks")
+    def test_no_llm_returns_sources(self, mock_search):
+        mock_search.return_value = [
+            {"file_path": "db.py", "chunk_index": 0, "text": "def init_db(): pass", "score": 0.8},
+        ]
 
         from services.ask import ask
         result = ask("repo-abc", "How does the database get initialized?")
@@ -119,25 +74,12 @@ class TestAskGoodMatch:
         assert result["sources"][0] == "db.py"
 
     @patch("services.ask._client")
-    @patch("services.ask._get_chroma")
-    @patch("services.ask._get_model")
-    def test_good_match_returns_answer_and_sources(
-        self, mock_model_fn, mock_chroma_fn, mock_client
-    ):
-        mock_model_fn.return_value = _mock_model()
-        mock_chroma_fn.return_value = _mock_chroma(
-            _fake_chroma_results(
-                docs=[
-                    "def init_db():\n    Base.metadata.create_all()",
-                    "engine = create_engine(DATABASE_URL)",
-                ],
-                metas=[
-                    {"repo_id": "repo-abc", "file_path": "db.py", "chunk_index": 0},
-                    {"repo_id": "repo-abc", "file_path": "db.py", "chunk_index": 1},
-                ],
-                distances=[0.2, 0.35],
-            )
-        )
+    @patch("services.ask.search_chunks")
+    def test_good_match_returns_answer_and_sources(self, mock_search, mock_client):
+        mock_search.return_value = [
+            {"file_path": "db.py", "chunk_index": 0, "text": "def init_db(): Base.metadata.create_all()", "score": 0.9},
+            {"file_path": "db.py", "chunk_index": 1, "text": "engine = create_engine(DATABASE_URL)", "score": 0.7},
+        ]
         mock_client.chat.completions.create.return_value = _mock_llm_response(
             "The database is initialized in db.py using SQLAlchemy's create_all()."
         )
@@ -146,31 +88,20 @@ class TestAskGoodMatch:
         result = ask("repo-abc", "How does the database get initialized?")
 
         assert "create_all" in result["answer"]
-        # Both chunks are from db.py — deduplicated to one entry.
         assert len(result["sources"]) == 1
         assert result["sources"][0] == "db.py"
-        # LLM was called once.
         mock_client.chat.completions.create.assert_called_once()
 
     @patch("services.ask._client")
-    @patch("services.ask._get_chroma")
-    @patch("services.ask._get_model")
-    def test_llm_exception_returns_graceful_error(
-        self, mock_model_fn, mock_chroma_fn, mock_client
-    ):
-        """If the LLM call raises, /ask returns an error message + sources."""
-        mock_model_fn.return_value = _mock_model()
-        mock_chroma_fn.return_value = _mock_chroma(
-            _fake_chroma_results(
-                docs=["code here"],
-                metas=[{"repo_id": "repo-abc", "file_path": "x.py", "chunk_index": 0}],
-                distances=[0.1],
-            )
-        )
+    @patch("services.ask.search_chunks")
+    def test_llm_exception_returns_graceful_error(self, mock_search, mock_client):
+        mock_search.return_value = [
+            {"file_path": "x.py", "chunk_index": 0, "text": "code here", "score": 0.8},
+        ]
         mock_client.chat.completions.create.side_effect = RuntimeError("API down")
 
         from services.ask import ask
         result = ask("repo-abc", "What is this?")
 
         assert "unavailable" in result["answer"]
-        assert len(result["sources"]) == 1  # sources still returned
+        assert len(result["sources"]) == 1

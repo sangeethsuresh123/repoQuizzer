@@ -9,7 +9,7 @@ class Base(DeclarativeBase):
 class Repo(Base):
     __tablename__ = "repos"
 
-    id = Column(String(64), primary_key=True)  # slug from _slug_for_url
+    id = Column(String(64), primary_key=True)
     url = Column(Text, nullable=False)
     cloned_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -37,6 +37,5 @@ class RepoChunk(Base):
     file_path = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
-    embedding_id = Column(Text, nullable=False)  # ID in Chroma collection
 
     repo = relationship("Repo", back_populates="chunks")

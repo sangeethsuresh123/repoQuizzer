@@ -12,14 +12,6 @@ DB_PATH = STORAGE_DIR / "quiz_history.db"
 REPOS_DIR.mkdir(parents=True, exist_ok=True)
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
-CHROMA_PERSIST_DIR = STORAGE_DIR / "chroma"
-CHROMA_PERSIST_DIR.mkdir(parents=True, exist_ok=True)
-
-# When CHROMA_HOST is set, use Chroma's HTTP client/server mode (Docker Compose).
-# When empty, fall back to PersistentClient (local dev).
-CHROMA_HOST = os.environ.get("CHROMA_HOST", "")
-CHROMA_PORT = int(os.environ.get("CHROMA_PORT", "8000"))
-
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     f"sqlite:///{DB_PATH}",  # local dev falls back to SQLite

@@ -1,21 +1,17 @@
 """
-RAG-based "Chat with the repo" — embed a question, retrieve top code
-chunks from Chroma, and ask the LLM to answer grounded in that context.
+RAG-based "Chat with the repo" — retrieve top code chunks via TF-IDF
+similarity and ask the LLM to answer grounded in that context.
 """
 
 import logging
 
-from services.embedder import _get_model, _get_chroma
-from services.quiz_generator import _client  # reuse existing OpenAI client
+from services.embedder import search_chunks
+from services.quiz_generator import _client
 from config import LLAMA_MODEL
 
 logger = logging.getLogger("repoquiz.ask")
 
-# Cosine distance threshold (Chroma metric: 1 − cosine_similarity).
-# 0.7 ≈ cosine similarity 0.3 — below this the chunks are considered
-# weakly relevant and we tell the user we couldn't find anything useful.
-MAX_DISTANCE = 0.7
-
+MIN_SCORE = 0.3
 TOP_K = 5
 
 ASK_SYSTEM_PROMPT = """\
@@ -27,52 +23,30 @@ Rules:
 1. If the provided code chunks are not relevant to the question, respond \
 with exactly: "I couldn't find anything relevant in this repository for \
 that question."
-2. When you answer, cite which file(s) you used by referencing the \
-[FILE: ...] header in the context.
+2. When you answer, cite which file(s) you used.
 3. Be concise — 1-4 sentences unless the user asks for more detail.
 4. Do not invent code or behaviour that is not present in the chunks.
 """
 
 
 def ask(repo_id: str, question: str) -> dict:
-    """Embed *question*, retrieve top chunks, call LLM, return answer + sources."""
+    results = search_chunks(repo_id, question, top_k=TOP_K)
 
-    # 1. Embed the question with the same model used for indexing.
-    model = _get_model()
-    q_embedding = model.encode([question]).tolist()
-
-    # 2. Similarity search in Chroma, filtered to this repo.
-    chroma = _get_chroma()
-    collection = chroma.get_collection("repo_chunks")
-
-    results = collection.query(
-        query_embeddings=q_embedding,
-        n_results=TOP_K,
-        where={"repo_id": repo_id},
-        include=["documents", "metadatas", "distances"],
-    )
-
-    docs = results.get("documents", [[]])[0]
-    metas = results.get("metadatas", [[]])[0]
-    distances = results.get("distances", [[]])[0]
-
-    # 3. Check relevance — if the closest chunk is too far away, say so.
-    if not docs or distances[0] > MAX_DISTANCE:
+    if not results or results[0]["score"] < MIN_SCORE:
         return {
             "answer": "I couldn't find anything relevant in this repository for that question.",
             "sources": [],
         }
 
-    # 4. Build the context block for the LLM.
     context_parts: list[str] = []
     source_files: list[str] = []
     seen_files: set[str] = set()
-    for doc, meta, dist in zip(docs, metas, distances):
-        header = f"[FILE: {meta['file_path']} | chunk {meta['chunk_index']}]"
-        context_parts.append(f"{header}\n{doc}")
-        if meta["file_path"] not in seen_files:
-            source_files.append(meta["file_path"])
-            seen_files.add(meta["file_path"])
+    for r in results:
+        header = f"[FILE: {r['file_path']} | chunk {r['chunk_index']}]"
+        context_parts.append(f"{header}\n{r['text']}")
+        if r["file_path"] not in seen_files:
+            source_files.append(r["file_path"])
+            seen_files.add(r["file_path"])
 
     context_block = "\n\n---\n\n".join(context_parts)
 
@@ -82,7 +56,6 @@ def ask(repo_id: str, question: str) -> dict:
         "Answer using only the code context above. Cite file(s) you used."
     )
 
-    # 5. Call the LLM.
     if _client is None:
         return {
             "answer": "LLM is not configured on the backend. Cannot generate an answer.",
@@ -103,9 +76,6 @@ def ask(repo_id: str, question: str) -> dict:
         answer = response.choices[0].message.content or "No response from the LLM."
     except Exception as e:
         logger.error("LLM call failed in /ask: %s", e)
-        answer = (
-            "The LLM service is currently unavailable. "
-            "Please try again later."
-        )
+        answer = "The LLM service is currently unavailable. Please try again later."
 
     return {"answer": answer, "sources": source_files}

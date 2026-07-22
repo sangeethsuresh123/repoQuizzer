@@ -11,12 +11,18 @@ import math
 from collections import Counter
 from pathlib import Path
 
-from services.repo_service import collect_scope_files
+from services.repo_service import collect_scope_files, slug_for_url
 
 logger = logging.getLogger("repoquiz.embedder")
 
 CHUNK_SIZE_CHARS = 2000
 CHUNK_OVERLAP_CHARS = 200
+
+
+def _normalize_repo_id(repo_id: str) -> str:
+    if repo_id.startswith("http"):
+        return slug_for_url(repo_id)
+    return repo_id
 
 
 def _tokenize(text: str) -> list[str]:
@@ -54,12 +60,18 @@ def search_chunks(repo_id: str, query_text: str, top_k: int = 5) -> list[dict]:
     from db import get_session
     from models import RepoChunk
 
-    with get_session() as session:
-        rows = (
-            session.query(RepoChunk)
-            .filter(RepoChunk.repo_id == repo_id)
-            .all()
-        )
+    repo_id = _normalize_repo_id(repo_id)
+
+    try:
+        with get_session() as session:
+            rows = (
+                session.query(RepoChunk)
+                .filter(RepoChunk.repo_id == repo_id)
+                .all()
+            )
+    except Exception as e:
+        logger.warning("repo_chunks table missing or DB error: %s", e)
+        return []
 
     if not rows:
         return []
@@ -120,14 +132,22 @@ def chunk_file(content: str, file_path: str) -> list[dict]:
 
 def embed_repo(repo_id: str, repo_url: str, repo_path: Path) -> int:
     from db import get_session
-    from models import RepoChunk
+    from models import RepoChunk, Base, engine
 
-    with get_session() as session:
-        existing = session.query(RepoChunk).filter(RepoChunk.repo_id == repo_id).first()
-        if existing:
-            count = session.query(RepoChunk).filter(RepoChunk.repo_id == repo_id).count()
-            logger.info("Repo %s already embedded (%d chunks), skipping", repo_id, count)
-            return 0
+    try:
+        Base.metadata.create_all(engine)
+    except Exception as e:
+        logger.warning("Could not ensure tables exist: %s", e)
+
+    try:
+        with get_session() as session:
+            existing = session.query(RepoChunk).filter(RepoChunk.repo_id == repo_id).first()
+            if existing:
+                count = session.query(RepoChunk).filter(RepoChunk.repo_id == repo_id).count()
+                logger.info("Repo %s already embedded (%d chunks), skipping", repo_id, count)
+                return 0
+    except Exception as e:
+        logger.warning("Could not check existing chunks: %s", e)
 
     files = collect_scope_files(repo_path, ".")
 
@@ -142,15 +162,19 @@ def embed_repo(repo_id: str, repo_url: str, repo_path: Path) -> int:
         logger.warning("No chunks produced for repo %s", repo_id)
         return 0
 
-    with get_session() as session:
-        session.query(RepoChunk).filter(RepoChunk.repo_id == repo_id).delete()
-        for c in all_chunks:
-            session.add(RepoChunk(
-                repo_id=repo_id,
-                file_path=c["file_path"],
-                chunk_index=c["chunk_index"],
-                text=c["text"],
-            ))
+    try:
+        with get_session() as session:
+            session.query(RepoChunk).filter(RepoChunk.repo_id == repo_id).delete()
+            for c in all_chunks:
+                session.add(RepoChunk(
+                    repo_id=repo_id,
+                    file_path=c["file_path"],
+                    chunk_index=c["chunk_index"],
+                    text=c["text"],
+                ))
+    except Exception as e:
+        logger.warning("Could not save chunks (table may not exist): %s", e)
+        return 0
 
     logger.info("Embedded %d chunks for repo %s", len(all_chunks), repo_id)
     return len(all_chunks)

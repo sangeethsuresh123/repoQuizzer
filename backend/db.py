@@ -1,4 +1,5 @@
 import json
+import logging
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, select
@@ -7,12 +8,18 @@ from sqlalchemy.orm import Session, sessionmaker
 from config import DATABASE_URL
 from models import Base, Repo, Attempt
 
+logger = logging.getLogger("repoquiz.db")
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 
 
 def init_db():
-    pass  # schema managed by Alembic — run `alembic upgrade head` before starting
+    try:
+        Base.metadata.create_all(engine)
+        logger.info("Database tables ensured (create_all)")
+    except Exception as e:
+        logger.warning("Could not run create_all: %s", e)
 
 
 @contextmanager

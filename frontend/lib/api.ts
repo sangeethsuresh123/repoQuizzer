@@ -64,11 +64,4 @@ export const api = {
   history: () => request<{ attempts: import("./types").AttemptSummary[] }>("/api/history"),
 
   historyDetail: (id: number) => request<any>(`/api/history/${id}`),
-
-  ask: (repo_id: string, question: string, opts?: { signal?: AbortSignal }) =>
-    request<import("./types").AskResponse>("/api/ask", {
-      method: "POST",
-      body: JSON.stringify({ repo_id, question }),
-      signal: opts?.signal,
-    }),
 };

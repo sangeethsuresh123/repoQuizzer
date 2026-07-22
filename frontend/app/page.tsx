@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { api } from "@/lib/api";
 import { TreeNode } from "@/lib/types";
 import FileTree from "@/components/FileTree";
@@ -93,14 +92,6 @@ export default function HomePage() {
             >
               Generate quiz →
             </button>
-            {repoId && (
-              <Link
-                href={`/chat?repo_id=${encodeURIComponent(repoId)}`}
-                className="rounded-md border border-accent/40 bg-accent/10 px-5 py-2 font-mono text-sm font-medium text-accent hover:bg-accent/20 transition-colors"
-              >
-                Chat with repo →
-              </Link>
-            )}
           </div>
         </div>
       )}

@@ -65,8 +65,3 @@ export type AttemptSummary = {
   score: number;
   max_score: number;
 };
-
-export type AskResponse = {
-  answer: string;
-  sources: string[];
-};

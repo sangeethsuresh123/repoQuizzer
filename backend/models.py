@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, func
-from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy import Column, Integer, String, Text, DateTime, func
+from sqlalchemy.orm import DeclarativeBase
 
 
 class Base(DeclarativeBase):
@@ -13,8 +13,6 @@ class Repo(Base):
     url = Column(Text, nullable=False)
     cloned_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    chunks = relationship("RepoChunk", back_populates="repo", cascade="all, delete-orphan")
-
 
 class Attempt(Base):
     __tablename__ = "attempts"
@@ -27,15 +25,3 @@ class Attempt(Base):
     answers_json = Column(Text, nullable=False)
     score = Column(Integer, nullable=False)
     max_score = Column(Integer, nullable=False)
-
-
-class RepoChunk(Base):
-    __tablename__ = "repo_chunks"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    repo_id = Column(String(64), ForeignKey("repos.id", ondelete="CASCADE"), nullable=False)
-    file_path = Column(Text, nullable=False)
-    chunk_index = Column(Integer, nullable=False)
-    text = Column(Text, nullable=False)
-
-    repo = relationship("Repo", back_populates="chunks")

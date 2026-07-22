@@ -9,8 +9,6 @@ from pydantic import BaseModel
 import config
 import db
 from services.repo_service import clone_repo, build_tree, collect_scope_files, slug_for_url, RepoError
-from services.embedder import embed_repo
-from services.ask import ask
 from services.chunker import build_context_blob
 from services.quiz_generator import (
     generate_quiz, generate_fallback_quiz, QuizGenerationError, QUIZ_TIMEOUT_SECONDS,
@@ -24,7 +22,7 @@ except ImportError:
 
 logger = logging.getLogger("repoquiz")
 
-GENERATE_TOTAL_TIMEOUT = 200  # hard cap on entire generate endpoint
+GENERATE_TOTAL_TIMEOUT = 200
 
 app = FastAPI(title="Repo Quiz API")
 
@@ -56,11 +54,6 @@ class SubmitRequest(BaseModel):
     coding_answer: str
 
 
-class AskRequest(BaseModel):
-    repo_id: str
-    question: str
-
-
 @app.post("/api/repo/import")
 async def import_repo(req: ImportRequest):
     try:
@@ -68,10 +61,6 @@ async def import_repo(req: ImportRequest):
         tree = await asyncio.to_thread(build_tree, repo_path)
         repo_id = slug_for_url(req.repo_url)
         db.upsert_repo(repo_id, req.repo_url)
-        try:
-            await asyncio.to_thread(embed_repo, repo_id, req.repo_url, repo_path)
-        except Exception as e:
-            logger.warning("Embedding failed (chat will be unavailable): %s", e)
     except RepoError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"tree": tree, "repo_id": repo_id}
@@ -182,31 +171,3 @@ def history_detail(attempt_id: int):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
-
-
-@app.get("/api/debug/chunks/{repo_id:path}")
-def debug_chunks(repo_id: str):
-    from services.embedder import _normalize_repo_id
-    repo_id = _normalize_repo_id(repo_id)
-    try:
-        with db.get_session() as session:
-            from models import RepoChunk
-            count = session.query(RepoChunk).filter(RepoChunk.repo_id == repo_id).count()
-            sample = session.query(RepoChunk).filter(RepoChunk.repo_id == repo_id).limit(2).all()
-            return {
-                "repo_id": repo_id,
-                "chunk_count": count,
-                "samples": [{"file_path": s.file_path, "text_len": len(s.text), "text_preview": s.text[:200]} for s in sample],
-            }
-    except Exception as e:
-        return {"repo_id": repo_id, "error": str(e)}
-
-
-@app.post("/api/ask")
-async def ask_question(req: AskRequest):
-    try:
-        result = await asyncio.to_thread(ask, req.repo_id, req.question)
-    except Exception as e:
-        logger.error("ask failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
-    return result

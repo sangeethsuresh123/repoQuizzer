@@ -29,7 +29,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   importRepo: (repo_url: string) =>
-    request<{ tree: any; repo_id: string }>("/api/repo/import", {
+    request<{ tree: any; repo_id: string; technologies: { name: string; url: string }[] }>("/api/repo/import", {
       method: "POST",
       body: JSON.stringify({ repo_url }),
     }),

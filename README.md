@@ -10,7 +10,7 @@ personalised improvement feedback.
 
 ### Live Demo
 
-- **Frontend:** [repo-quizzer.vercel.app](https://repo-quizzer-3zuw.vercel.app/)
+- **Frontend:** [repo-quizzer.vercel.app](https://repo-quizzer2.vercel.app/)
 - **Backend API:** [repoquizzer.onrender.com](https://repoquizzer.onrender.com)
 
 ## Stack
